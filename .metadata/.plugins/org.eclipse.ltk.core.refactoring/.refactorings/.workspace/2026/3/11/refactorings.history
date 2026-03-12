@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;myRTOS&apos; to &apos;devvRTOS&apos;" description="Rename resource &apos;myRTOS&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="/myRTOS" name="devvRTOS" stamp="1773335683648" updateReferences="true"/>
+</session>
