@@ -1,6 +1,0 @@
-eclipse.preferences.version=1
-environment/project/com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.1764274930/append=true
-environment/project/com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.1764274930/appendContributed=true
-environment/project/com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.1764274930/stm32f401xe.h/delimiter=;
-environment/project/com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.1764274930/stm32f401xe.h/operation=append
-environment/project/com.st.stm32cube.ide.mcu.gnu.managedbuild.config.exe.debug.1764274930/stm32f401xe.h/value=C\:\\Users\\devvr\\STM32Cube\\Repository\\STM32Cube_FW_F4_V1.28.3\\Drivers\\CMSIS\\Device\\ST\\STM32F4xx\\Include
