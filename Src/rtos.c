@@ -14,7 +14,7 @@ static uint32_t task_a_stack[STACK_SIZE];
 static uint32_t task_b_stack[STACK_SIZE];
 
 tcb_t tcbs[NUM_TASKS];
-
+tcb_t *current_tcb;
 
 // rtos.c
 
@@ -40,22 +40,6 @@ void task_b(void) {
 static void task_exit_error(void) {
     while (1);  // breakpoint here catches tasks that wrongly return
 }
-//│  xpsr    │ ┐
-//│  pc      │ │
-//│  lr      │ │
-//│  r12     │ │ ← hardware pushed these (automatic)
-//│  r3      │ │
-//│  r2      │ │
-//│  r1      │ │
-//│  r0      │ ┘
-//│  r11     │ ┐
-//│  r10     │ │
-//│  r9      │ │
-//│  r8      │ │ ← your PendSV pushed these (manual)
-//│  r7      │ │
-//│  r6      │ │
-//│  r5      │ │
-//│  r4			stack top
 void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stack_size) {
     // Fill r0-r3, r12 (hardware frame markers) and r4-r11 (software frame) with marker
     for (int i = 4; i <= 16; i++) {
@@ -75,19 +59,21 @@ void rtos_init(void) {
 }
 
 void scheduler_start(void){
-	__asm volatile(
-			"ldr r0, =tcbs		\n"	// r0 contains address of tcb[0]
-			"ldr r1, [r0]		\n" // r1 contains tcb[0].psp
-			"ldr r2, [r1, #56]	\n" // load pc value into r2
-			"add r1, r1, #64	\n"
-			"msr psp, r1		\n"
-			"mov r0, #2			\n"
-			"msr control, r0	\n"
-			"isb				\n"	// pipeline flush
-			"bx r2				\n"	// jump to function
-			:
-			:
-			:"r0","r1","r2"
-	);
-
+	current_tcb = &tcbs[0];
+	__asm volatile("svc 0");
 }
+__attribute__((naked)) void SVC_Handler(void){	//naked attribute tells the compiler to not run any extra instructions.
+	// launch task a. load r4- r11 from fabricated stack into registers. then set LR: 0xFFFFFFFD
+	// to set CPU to thread mode, and use PSP stack for the hardware pop.
+	__asm volatile(
+			"ldr r0, =current_tcb	\n"	// r0 has address of current_tcb
+			"ldr r1, [r0]			\n"	// r1 has address of the tcb
+			"ldr r0, [r1]			\n"	// r0 has the process stack pointer, currently pointing at r4
+			"add r0, r0, #32		\n"	// make pointer point to hardware pop frame
+			"msr psp, r0			\n" // move updated value to psp
+			"ldr lr, =0xFFFFFFFD	\n"	// set LR
+			"isb					\n"	// flush pipline
+			"bx lr					\n"	// return
+	);
+}
+

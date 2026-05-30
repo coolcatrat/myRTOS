@@ -17,6 +17,7 @@ typedef struct {
 typedef void (*task_func_t)(void);
 
 extern tcb_t tcbs[];
+extern tcb_t *current_tcb;
 //extern uint32_t task_a_stack[];
 //extern uint32_t task_b_stack[];
 extern volatile uint32_t task_a_counter;
