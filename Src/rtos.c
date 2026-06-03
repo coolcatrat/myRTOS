@@ -15,11 +15,16 @@ static uint32_t task_b_stack[STACK_SIZE];
 
 tcb_t tcbs[NUM_TASKS];
 tcb_t *current_tcb;
-
+static uint32_t current_index;
 // rtos.c
 
 volatile uint32_t task_a_counter = 0;
 volatile uint32_t task_b_counter = 0;
+
+void scheduler(void) {                       // POLICY — swappable later
+    current_index = (current_index + 1) % NUM_TASKS;
+    current_tcb   = &tcbs[current_index];
+}
 
 void task_a(void) {
     while (1) {
@@ -54,6 +59,7 @@ void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stac
 }
 
 void rtos_init(void) {
+	SCB->SHP[10] = 0xFF;		// keep PendSV lowest priority ISR so it does not interrupt other ISR's
     task_init(&tcbs[0], task_a, task_a_stack, STACK_SIZE);
     task_init(&tcbs[1], task_b, task_b_stack, STACK_SIZE);
 }
@@ -74,6 +80,38 @@ __attribute__((naked)) void SVC_Handler(void){	//naked attribute tells the compi
 			"ldr lr, =0xFFFFFFFD	\n"	// set LR
 			"isb					\n"	// flush pipline
 			"bx lr					\n"	// return
+	);
+}
+__attribute__((naked)) void PendSV_Handler(void){
+	__asm volatile(
+			// save register r4-r11 into process stack
+			// update current task's tcb
+			// get next task tcb
+			// get the psp for the new task
+			// unload r4-r11 into cpu from the new process stack
+			// EXEC_RETURN, set new psp
+			"mrs r0, psp			\n"
+			"stmdb r0!, {r4-r11}	\n"	// r0 stores the address of psp after pushing the registers
+
+			"ldr r1, =current_tcb	\n"	// r1 contains address of pointer current_tcb
+			"ldr r1, [r1]			\n"	// r1 contains address of current_tcb->psp
+			"str r0, [r1]			\n"	// current_tcb->psp = r0
+
+			"push {lr}				\n"
+			"bl scheduler			\n"
+			"pop {lr}				\n"
+
+			"ldr r0, =current_tcb 	\n"	// r0 = &current_tcb
+			"ldr r0, [r0] 			\n"	// r0 = current_tcb
+			"ldr r1, [r0] 			\n"	// r1 = current_tcb->psp
+
+			"ldmia r1!, {r4-r11}	\n"	// unload r4-r11 from stack into the cpu registers
+			"msr psp, r1			\n"
+			"isb					\n"
+			"bx lr					\n"
+
+
+
 	);
 }
 

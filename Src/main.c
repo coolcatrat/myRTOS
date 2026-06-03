@@ -33,6 +33,7 @@ void SysTick_Init(uint32_t ticks){
 
 void SysTick_Handler(void){
 	tick_count++;
+    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;   // request a context switch
 }
 
 void delay_ms(uint32_t ms){
