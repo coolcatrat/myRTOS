@@ -1,7 +1,7 @@
 /**
  ******************************************************************************
  * @file           : main.c
- * @brief          : Main program body
+ * @brief          : devvRTOS demo — three counter tasks, watch them live
  ******************************************************************************
  */
 
@@ -14,18 +14,47 @@
 #endif
 
 
-// Busy-wait helper for non-task code. Tasks should use osDelay instead.
-void delay_ms(uint32_t ms) {
-    uint32_t start = tick_count;
-    while ((tick_count - start) < ms);
+/*
+Counter variables to track in debugger mode
+a and b should climb equally, c should lag*/
+volatile uint32_t counter_a = 0;
+volatile uint32_t counter_b = 0;
+volatile uint32_t counter_c = 0;
+
+
+// Pure spinner. Just counts as fast as it gets scheduled.
+static void task_a(void) {
+    while (1) {
+        counter_a++;
+    }
 }
 
-int main(void) {
-    // rtos_init sets up PendSV, creates the idle task, starts SysTick,
-    // and launches the first task. It does not return.
-    rtos_init();
-
+// Pure spinner. Same as A — used to compare scheduling shares.
+static void task_b(void) {
     while (1) {
-        // never reached
+        counter_b++;
     }
+}
+
+// Counts, then sleeps. osDelay blocks it, so its counter crawls
+// compared to the spinners — this is the BLOCKED/READY path in action.
+static void task_c(void) {
+    while (1) {
+        counter_c++;
+        osDelay(100);          // ~100 ticks blocked (~100ms @ 1ms tick)
+    }
+}
+
+
+int main(void) {
+    rtos_init();                    // kernel setup + idle task (slot 0)
+
+    // task_create(function, priority, stack words)
+    task_create(task_a, 3, 64);     // 64 words = 256 bytes, plenty for these
+    task_create(task_b, 2, 64);
+    task_create(task_c, 1, 64);
+
+    rtos_start();                   // enable SysTick + launch — never returns
+
+    while (1) { }                   // unreachable
 }

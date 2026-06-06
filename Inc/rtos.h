@@ -39,9 +39,9 @@ extern volatile uint32_t tick_count; // SysTick time base — read by main's del
 
 /* ---- Public API ---- */
 void SysTick_Handler(void);
-void scheduler_start(void);
 void osDelay(uint32_t ticks);
 void rtos_init(void);
+void rtos_start(void);
 
 int  task_create(task_func_t func, uint8_t priority, uint32_t stack_words);
 

@@ -116,21 +116,17 @@ static void idle_task(void) {
     while (1) { }
 }
 
-// Bring the kernel up, then hand control to the first task.
+// Bring the kernel up: PendSV priority + idle task. Does NOT start ticking yet.
 void rtos_init(void) {
-    SCB->SHP[10] = 0xFF;                         // PendSV = lowest priority, so it
-                                                 // never preempts another handler
-    task_create(idle_task, 0, MIN_STACK_WORDS);  // slot 0 — the always-READY fallback
-
-    systick_init(SYSTICK_RELOAD);                // start ticking ONLY now: idle exists
-                                                 // and PendSV priority is set
-    scheduler_start();                           // does not return — launches task 0
+    SCB->SHP[10] = 0xFF;                          // PendSV = lowest priority
+    task_create(idle_task, 0, MIN_STACK_WORDS);   // slot 0: always-READY fallback
 }
 
-// Point current_tcb at the first task, then trigger SVC to launch it.
-void scheduler_start(void) {
-    current_tcb = &tcbs[0];
-    __asm volatile("svc 0");
+// Enable the tick and launch the first task. Does not return.
+void rtos_start(void) {
+    current_tcb = &tcbs[0];        // start on idle; first tick switches to a real task
+    systick_init(SYSTICK_RELOAD);  // tick on ONLY now — all tasks already exist
+    __asm volatile("svc 0");       // launch
 }
 
 // Configure and enable SysTick. Kept private — only rtos_init calls it.
