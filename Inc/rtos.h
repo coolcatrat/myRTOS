@@ -1,6 +1,7 @@
 /*
  * rtos.h
  *
+ *  Public API + shared types for the devvRTOS kernel.
  *  Created on: 27-May-2026
  *      Author: devvr
  */
@@ -9,25 +10,39 @@
 #define RTOS_H_
 
 #include <stdint.h>
+#include "config.h"
+#include "allocator.h"
 
+/* ---- Task control block ---- */
 typedef struct {
-    uint32_t *psp;
+    uint32_t *psp;          // saved process stack pointer for this task
+    uint32_t  wake_tick;    // tick at which a BLOCKED task becomes READY (osDelay)
+    uint8_t   state;        // holds a task_state_t, narrowed to 1 byte to keep the TCB small
+    uint8_t   priority;     // static priority
+    // to be added later: whatever semaphore/queue it's waiting on
 } tcb_t;
 
+/* ---- Task states ---- */
+typedef enum {
+    TASK_READY   = 0,
+    TASK_RUNNING = 1,
+    TASK_BLOCKED = 2,
+} task_state_t;
+
+/* A task is just a function that takes nothing and never returns. */
 typedef void (*task_func_t)(void);
 
-extern tcb_t tcbs[];
-extern tcb_t *current_tcb;
-//extern uint32_t task_a_stack[];
-//extern uint32_t task_b_stack[];
-extern volatile uint32_t task_a_counter;
-extern volatile uint32_t task_b_counter;
+/* ---- Kernel state shared with asm / main ---- */
+extern tcb_t          tcbs[];        // the TCB table (exported mainly for debugger visibility)
+extern tcb_t         *current_tcb;   // running task — referenced by SVC/PendSV asm
+extern volatile uint32_t tick_count; // SysTick time base — read by main's delay_ms
 
+/* ---- Public API ---- */
+void SysTick_Handler(void);
 void scheduler_start(void);
-
-void task_a(void);
-void task_b(void);
-void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stack_size);
+void osDelay(uint32_t ticks);
 void rtos_init(void);
+
+int  task_create(task_func_t func, uint8_t priority, uint32_t stack_words);
 
 #endif /* RTOS_H_ */

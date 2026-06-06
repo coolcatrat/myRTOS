@@ -1,117 +1,211 @@
 /*
  * rtos.c
  *
+ *  devvRTOS kernel core: scheduler (policy), context switch (mechanism),
+ *  task creation, and the SysTick time base.
  *  Created on: 27-May-2026
  *      Author: devvr
  */
 
+#include <stdint.h>
 #include "rtos.h"
+#include "config.h"
+#include "allocator.h"
 #include "stm32f401xe.h"
-#define NUM_TASKS 2
-#define STACK_SIZE 128 //words
 
-static uint32_t task_a_stack[STACK_SIZE];
-static uint32_t task_b_stack[STACK_SIZE];
 
-tcb_t tcbs[NUM_TASKS];
-tcb_t *current_tcb;
-static uint32_t current_index;
-// rtos.c
+/* ---- Forward declarations (file-private helpers) ---- */
+static void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stack_size);
+static void idle_task(void);
+static void task_exit_error(void);
+static void systick_init(uint32_t reload);
+void        scheduler(void);   // not static: PendSV asm reaches it as a global symbol
 
-volatile uint32_t task_a_counter = 0;
-volatile uint32_t task_b_counter = 0;
 
-void scheduler(void) {                       // POLICY — swappable later
-    current_index = (current_index + 1) % NUM_TASKS;
+/* ---- Kernel state ---- */
+/* exported (extern in rtos.h): */
+volatile uint32_t tick_count;          // SysTick time base
+tcb_t             tcbs[MAX_TASKS];      // the TCB table
+tcb_t            *current_tcb;          // currently running task
+
+/* private to this file: */
+static uint32_t   current_index;        // scheduler's cursor into tcbs[]
+static uint32_t   num_tasks = 0;        // tasks created so far (append-only)
+
+
+/* ============================================================ */
+/*  Time base                                                   */
+/* ============================================================ */
+
+// Fires every tick. Wakes any task whose delay is up, then asks for a switch.
+void SysTick_Handler(void) {
+    tick_count++;
+
+    for (int i = 0; i < num_tasks; i++) {
+        tcb_t *cur = &tcbs[i];
+        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count)
+            cur->state = TASK_READY;
+    }
+
+    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;   // request a context switch
+}
+
+// Block the calling task for `ticks` ticks, then give up the CPU now.
+void osDelay(uint32_t ticks) {
+    current_tcb->wake_tick = tick_count + ticks;   // when to wake back up
+    current_tcb->state     = TASK_BLOCKED;         // take self out of contention
+    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;           // yield immediately
+}
+
+
+/* ============================================================ */
+/*  Scheduler — POLICY (swappable later)                        */
+/* ============================================================ */
+
+// Round-robin: step to the next READY task and make it RUNNING.
+void scheduler(void) {
+    if (current_tcb->state != TASK_BLOCKED)        // don't undo a self-block
+        current_tcb->state = TASK_READY;
+
+    current_index = (current_index + 1) % num_tasks;
     current_tcb   = &tcbs[current_index];
+
+    while (current_tcb->state != TASK_READY) {     // skip anything not runnable
+        current_index = (current_index + 1) % num_tasks;
+        current_tcb   = &tcbs[current_index];
+    }                                              // idle is always READY, so this always ends
+
+    current_tcb->state = TASK_RUNNING;
 }
 
-void task_a(void) {
-    while (1) {
-        task_a_counter++;
 
-        // crude visible delay so the LED blink is perceptible
-        for (volatile int i = 0; i < 1000000; i++);
+/* ============================================================ */
+/*  Task creation                                               */
+/* ============================================================ */
 
-        GPIOA->ODR ^= (1 << 5);   // toggle PA5 (onboard LED)
-    }
+// Create a task. stack_words must be at least MIN_STACK_WORDS (one full frame).
+// Returns the new task id, or -1 on failure (no slots / out of memory / stack too small).
+int task_create(task_func_t func, uint8_t priority, uint32_t stack_words) {
+    if (num_tasks >= MAX_TASKS)
+        return -1;                  // task table full — raise MAX_TASKS
+
+    if (stack_words < MIN_STACK_WORDS)
+        return -1;                  // can't even fit the exception frame
+
+    uint32_t *stack_base = kalloc(stack_words);
+    if (stack_base == 0)
+        return -1;                  // pool exhausted — nothing to allocate
+
+    tcb_t *tcb    = &tcbs[num_tasks];
+    tcb->state    = TASK_READY;
+    tcb->priority = priority;
+
+    task_init(tcb, func, stack_base, stack_words);
+
+    num_tasks++;                    // commit only after full success
+    return num_tasks - 1;           // task id
 }
 
-void task_b(void) {
-    while (1) {
-        task_b_counter++;
-    }
+
+/* ============================================================ */
+/*  Startup                                                     */
+/* ============================================================ */
+
+// Lowest-priority task: runs only when nothing else is READY.
+static void idle_task(void) {
+    while (1) { }
 }
+
+// Bring the kernel up, then hand control to the first task.
+void rtos_init(void) {
+    SCB->SHP[10] = 0xFF;                         // PendSV = lowest priority, so it
+                                                 // never preempts another handler
+    task_create(idle_task, 0, MIN_STACK_WORDS);  // slot 0 — the always-READY fallback
+
+    systick_init(SYSTICK_RELOAD);                // start ticking ONLY now: idle exists
+                                                 // and PendSV priority is set
+    scheduler_start();                           // does not return — launches task 0
+}
+
+// Point current_tcb at the first task, then trigger SVC to launch it.
+void scheduler_start(void) {
+    current_tcb = &tcbs[0];
+    __asm volatile("svc 0");
+}
+
+// Configure and enable SysTick. Kept private — only rtos_init calls it.
+static void systick_init(uint32_t reload) {
+    SysTick->LOAD = reload - 1;   // counter reloads from here
+    SysTick->VAL  = 0;            // start the count at 0
+    SysTick->CTRL = 0x7;          // enable counter + tick interrupt + processor clock
+}
+
+
+/* ============================================================ */
+/*  Context switch — MECHANISM                                  */
+/* ============================================================ */
+
+// A task that returns lands here. Trap so the bug is obvious in the debugger.
 static void task_exit_error(void) {
-    while (1);  // breakpoint here catches tasks that wrongly return
+    while (1);
 }
-void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stack_size) {
-    // Fill r0-r3, r12 (hardware frame markers) and r4-r11 (software frame) with marker
-    for (int i = 4; i <= 16; i++) {
+
+// Fabricate a fresh stack frame so the task looks like it was already running
+// and got interrupted. The very first switch into it "restores" this fake frame.
+static void task_init(tcb_t *tcb, task_func_t func, uint32_t *stack_base, uint32_t stack_size) {
+    // Fill the whole 16-word frame (r0-r3, r12, r4-r11) with a marker so a wrong
+    // restore is easy to spot in memory.
+    for (int i = 4; i <= FULL_FRAME_WORDS; i++) {
         stack_base[stack_size - i] = 0xDEADBEEF;
     }
 
-    stack_base[stack_size - 1] = 0x01000000;                  // xPSR (Thumb bit)
-    stack_base[stack_size - 2] = (uint32_t)func;              // pc
-    stack_base[stack_size - 3] = (uint32_t)task_exit_error;   // lr
+    stack_base[stack_size - 1] = INITIAL_XPSR;              // xPSR — Thumb bit set
+    stack_base[stack_size - 2] = (uint32_t)func;            // pc  — where the task starts
+    stack_base[stack_size - 3] = (uint32_t)task_exit_error; // lr  — where it goes if it returns
 
-    tcb->psp = &stack_base[stack_size - 16];
+    tcb->psp = &stack_base[stack_size - FULL_FRAME_WORDS];  // top of the saved frame
 }
 
-void rtos_init(void) {
-	SCB->SHP[10] = 0xFF;		// keep PendSV lowest priority ISR so it does not interrupt other ISR's
-    task_init(&tcbs[0], task_a, task_a_stack, STACK_SIZE);
-    task_init(&tcbs[1], task_b, task_b_stack, STACK_SIZE);
+// SVC handler: launches the very first task (current_tcb).
+// Loads its fake frame and exception-returns into Thread mode on the PSP stack.
+__attribute__((naked)) void SVC_Handler(void) {
+    // 'naked' = compiler adds no prologue/epilogue; the asm below is the whole function.
+    __asm volatile(
+        "ldr r0, =current_tcb   \n" // r0 = &current_tcb
+        "ldr r1, [r0]           \n" // r1 = current_tcb (the tcb pointer)
+        "ldr r0, [r1]           \n" // r0 = current_tcb->psp (points at saved r4)
+        "add r0, r0, #32        \n" // skip the 8 software-saved words (HW_FRAME_WORDS*4 = 32 bytes)
+        "msr psp, r0            \n" // PSP now points at the hardware frame
+        "ldr lr, =0xFFFFFFFD    \n" // EXC_RETURN_PSP: return to Thread mode, use PSP
+        "isb                    \n" // flush the pipeline before the mode switch
+        "bx lr                  \n" // exception-return -> the CPU pops the hardware frame
+    );
 }
 
-void scheduler_start(void){
-	current_tcb = &tcbs[0];
-	__asm volatile("svc 0");
+// PendSV handler: the actual context switch (save current, pick next, restore next).
+__attribute__((naked)) void PendSV_Handler(void) {
+    __asm volatile(
+        // --- save current task's r4-r11 onto its stack ---
+        "mrs r0, psp            \n"
+        "stmdb r0!, {r4-r11}    \n" // r0 = new top of stack after pushing r4-r11
+
+        "ldr r1, =current_tcb   \n" // r1 = &current_tcb
+        "ldr r1, [r1]           \n" // r1 = current_tcb
+        "str r0, [r1]           \n" // current_tcb->psp = r0   (save it)
+
+        // --- pick the next task (in C, protecting lr/EXC_RETURN) ---
+        "push {lr}              \n"
+        "bl scheduler           \n"
+        "pop {lr}               \n"
+
+        // --- restore next task's r4-r11 from its stack ---
+        "ldr r0, =current_tcb   \n" // r0 = &current_tcb
+        "ldr r0, [r0]           \n" // r0 = current_tcb (now the new one)
+        "ldr r1, [r0]           \n" // r1 = current_tcb->psp
+
+        "ldmia r1!, {r4-r11}    \n" // pop r4-r11 back into the CPU
+        "msr psp, r1            \n" // PSP points at the hardware frame
+        "isb                    \n"
+        "bx lr                  \n" // exception-return -> CPU pops the hardware frame
+    );
 }
-__attribute__((naked)) void SVC_Handler(void){	//naked attribute tells the compiler to not run any extra instructions.
-	// launch task a. load r4- r11 from fabricated stack into registers. then set LR: 0xFFFFFFFD
-	// to set CPU to thread mode, and use PSP stack for the hardware pop.
-	__asm volatile(
-			"ldr r0, =current_tcb	\n"	// r0 has address of current_tcb
-			"ldr r1, [r0]			\n"	// r1 has address of the tcb
-			"ldr r0, [r1]			\n"	// r0 has the process stack pointer, currently pointing at r4
-			"add r0, r0, #32		\n"	// make pointer point to hardware pop frame
-			"msr psp, r0			\n" // move updated value to psp
-			"ldr lr, =0xFFFFFFFD	\n"	// set LR
-			"isb					\n"	// flush pipline
-			"bx lr					\n"	// return
-	);
-}
-__attribute__((naked)) void PendSV_Handler(void){
-	__asm volatile(
-			// save register r4-r11 into process stack
-			// update current task's tcb
-			// get next task tcb
-			// get the psp for the new task
-			// unload r4-r11 into cpu from the new process stack
-			// EXEC_RETURN, set new psp
-			"mrs r0, psp			\n"
-			"stmdb r0!, {r4-r11}	\n"	// r0 stores the address of psp after pushing the registers
-
-			"ldr r1, =current_tcb	\n"	// r1 contains address of pointer current_tcb
-			"ldr r1, [r1]			\n"	// r1 contains address of current_tcb->psp
-			"str r0, [r1]			\n"	// current_tcb->psp = r0
-
-			"push {lr}				\n"
-			"bl scheduler			\n"
-			"pop {lr}				\n"
-
-			"ldr r0, =current_tcb 	\n"	// r0 = &current_tcb
-			"ldr r0, [r0] 			\n"	// r0 = current_tcb
-			"ldr r1, [r0] 			\n"	// r1 = current_tcb->psp
-
-			"ldmia r1!, {r4-r11}	\n"	// unload r4-r11 from stack into the cpu registers
-			"msr psp, r1			\n"
-			"isb					\n"
-			"bx lr					\n"
-
-
-
-	);
-}
-
