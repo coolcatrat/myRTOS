@@ -14,11 +14,13 @@
 #include "allocator.h"
 
 /* ---- Task control block ---- */
-typedef struct {
-    uint32_t *psp;          // saved process stack pointer for this task
-    uint32_t  wake_tick;    // tick at which a BLOCKED task becomes READY (osDelay)
-    uint8_t   state;        // holds a task_state_t, narrowed to 1 byte to keep the TCB small
-    uint8_t   priority;     // static priority
+typedef struct tcb_s {
+    uint32_t        *psp;          // saved process stack pointer for this task
+    uint32_t        wake_tick;    // tick at which a BLOCKED task becomes READY (osDelay)
+    struct tcb_s    *next;
+    uint8_t         state;        // holds a task_state_t, narrowed to 1 byte to keep the TCB small
+    uint8_t         priority;     // static priority
+    
     // to be added later: whatever semaphore/queue it's waiting on
 } tcb_t;
 

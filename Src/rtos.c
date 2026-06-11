@@ -11,6 +11,7 @@
 #include "rtos.h"
 #include "config.h"
 #include "allocator.h"
+#include "scheduler.h"
 #include "stm32f401xe.h"
 
 
@@ -29,7 +30,6 @@ tcb_t             tcbs[MAX_TASKS];      // the TCB table
 tcb_t            *current_tcb;          // currently running task
 
 /* private to this file: */
-static uint32_t   current_index;        // scheduler's cursor into tcbs[]
 static uint32_t   num_tasks = 0;        // tasks created so far (append-only)
 
 
@@ -43,8 +43,10 @@ void SysTick_Handler(void) {
 
     for (int i = 0; i < num_tasks; i++) {
         tcb_t *cur = &tcbs[i];
-        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count)
+        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count){ // check if a task is ready
             cur->state = TASK_READY;
+            scheduler_ready_add(cur);
+        } 
     }
 
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;   // request a context switch
@@ -62,19 +64,14 @@ void osDelay(uint32_t ticks) {
 /*  Scheduler — POLICY (swappable later)                        */
 /* ============================================================ */
 
-// Round-robin: step to the next READY task and make it RUNNING.
+// Calls scheduler APIs
 void scheduler(void) {
-    if (current_tcb->state != TASK_BLOCKED)        // don't undo a self-block
+    if (current_tcb->state != TASK_BLOCKED)  {      // don't undo a self-block
         current_tcb->state = TASK_READY;
+        scheduler_ready_add(current_tcb);           // if task is not blocked, add it back to queue
+    }
 
-    current_index = (current_index + 1) % num_tasks;
-    current_tcb   = &tcbs[current_index];
-
-    while (current_tcb->state != TASK_READY) {     // skip anything not runnable
-        current_index = (current_index + 1) % num_tasks;
-        current_tcb   = &tcbs[current_index];
-    }                                              // idle is always READY, so this always ends
-
+    current_tcb = scheduler_next();         // call api to get next task
     current_tcb->state = TASK_RUNNING;
 }
 
@@ -101,7 +98,7 @@ int task_create(task_func_t func, uint8_t priority, uint32_t stack_words) {
     tcb->priority = priority;
 
     task_init(tcb, func, stack_base, stack_words);
-
+    scheduler_ready_add(tcb);       // add task to queue
     num_tasks++;                    // commit only after full success
     return num_tasks - 1;           // task id
 }
@@ -119,12 +116,14 @@ static void idle_task(void) {
 // Bring the kernel up: PendSV priority + idle task. Does NOT start ticking yet.
 void rtos_init(void) {
     SCB->SHP[10] = 0xFF;                          // PendSV = lowest priority
+    scheduler_init();
     task_create(idle_task, 0, MIN_STACK_WORDS);   // slot 0: always-READY fallback
 }
 
 // Enable the tick and launch the first task. Does not return.
 void rtos_start(void) {
-    current_tcb = &tcbs[0];        // start on idle; first tick switches to a real task
+    current_tcb = scheduler_next();// start on idle; first tick switches to a real task
+    current_tcb->state = TASK_RUNNING;
     systick_init(SYSTICK_RELOAD);  // tick on ONLY now — all tasks already exist
     __asm volatile("svc 0");       // launch
 }

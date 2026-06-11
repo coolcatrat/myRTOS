@@ -41,7 +41,6 @@ static void task_b(void) {
 static void task_c(void) {
     while (1) {
         counter_c++;
-        osDelay(100);          // ~100 ticks blocked (~100ms @ 1ms tick)
     }
 }
 
@@ -50,9 +49,9 @@ int main(void) {
     rtos_init();                    // kernel setup + idle task (slot 0)
 
     // task_create(function, priority, stack words)
-    task_create(task_a, 3, 64);     // 64 words = 256 bytes, plenty for these
+    task_create(task_a, 1, 64);     // 64 words = 256 bytes, plenty for these
     task_create(task_b, 2, 64);
-    task_create(task_c, 1, 64);
+    task_create(task_c, 3, 64);
 
     rtos_start();                   // enable SysTick + launch — never returns
 

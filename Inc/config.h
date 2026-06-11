@@ -19,6 +19,7 @@
 #define MIN_STACK_WORDS   16        // smallest legal stack = one full frame, no headroom
 #define SYSTICK_RELOAD    16000     // SysTick counts this many cycles per tick (~1ms @ 16MHz)
 
+#define NUM_PRIORITIES 32           
 /* Budget note:
  * Every task stack comes out of the kalloc pool.
  * MAX_TASKS stacks must all fit inside POOL_SIZE_WORDS.
