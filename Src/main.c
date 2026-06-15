@@ -26,28 +26,26 @@ volatile uint32_t counter_c = 0;
 static void task_a(void) {
     while (1) {
         counter_a++;
+        osDelay(100);
     }
 }
-
 // Pure spinner. Same as A — used to compare scheduling shares.
 static void task_b(void) {
     while (1) {
         counter_b++;
+        osDelay(50);
     }
 }
-
 // Counts, then sleeps. osDelay blocks it, so its counter crawls
 // compared to the spinners — this is the BLOCKED/READY path in action.
 static void task_c(void) {
     while (1) {
         counter_c++;
+        osDelay(10);
     }
 }
-
-
 int main(void) {
     rtos_init();                    // kernel setup + idle task (slot 0)
-
     // task_create(function, priority, stack words)
     task_create(task_a, 1, 64);     // 64 words = 256 bytes, plenty for these
     task_create(task_b, 2, 64);

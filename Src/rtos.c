@@ -12,6 +12,7 @@
 #include "config.h"
 #include "allocator.h"
 #include "scheduler.h"
+#include "critical.h"
 #include "stm32f401xe.h"
 
 
@@ -54,8 +55,10 @@ void SysTick_Handler(void) {
 
 // Block the calling task for `ticks` ticks, then give up the CPU now.
 void osDelay(uint32_t ticks) {
+    uint32_t old = os_enter_critical();
     current_tcb->wake_tick = tick_count + ticks;   // when to wake back up
     current_tcb->state     = TASK_BLOCKED;         // take self out of contention
+    os_exit_critical(old);
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;           // yield immediately
 }
 
@@ -117,6 +120,8 @@ static void idle_task(void) {
 void rtos_init(void) {
     SCB->SHP[10] = 0xFF;                          // PendSV = lowest priority
     scheduler_init();
+    NVIC_SetPriority(PendSV_IRQn,15);
+    NVIC_SetPriority(SysTick_IRQn,15);
     task_create(idle_task, 0, MIN_STACK_WORDS);   // slot 0: always-READY fallback
 }
 

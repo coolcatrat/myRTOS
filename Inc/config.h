@@ -19,12 +19,17 @@
 #define MIN_STACK_WORDS   16        // smallest legal stack = one full frame, no headroom
 #define SYSTICK_RELOAD    16000     // SysTick counts this many cycles per tick (~1ms @ 16MHz)
 
-#define NUM_PRIORITIES 32           
+#define NUM_PRIORITIES 32           // no of priority levels for tcb. 32 to fit into a 4 byte int.
+
 /* Budget note:
  * Every task stack comes out of the kalloc pool.
  * MAX_TASKS stacks must all fit inside POOL_SIZE_WORDS.
  * e.g. 16 tasks * 64-word stacks = 1024 words = the whole pool.
  * Oversubscribe and kalloc just returns 0 -> task_create returns -1. */
+
+/* Kernel masks every interrupt at logical priority >= 5 (numerically <= urgent).
+  Interrupts at logical 0..4 keep firing and MUST NOT call any RTOS API. */
+#define MAX_SYSCALL_INTERRUPT_PRIORITY   (5U << 4)   /* = 0x50 */
 
 
 /* ============================================================ */
