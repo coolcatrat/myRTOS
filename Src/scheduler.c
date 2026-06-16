@@ -22,7 +22,11 @@ void scheduler_init(void){
 /* enqueue a task into the ready list of its 
 respective priority */
 static void task_enqueue(tcb_t *task){
+    if(task->queued == 1)
+        return;
+
     ready_queue_t *q = &ready_list[task->priority];  // queue to be enqueued in
+    task->queued = 1;
     task->next = 0;
     
     if(!q->head && !q->tail){   // empty list
@@ -45,6 +49,7 @@ static tcb_t* task_dequeue(uint8_t priority){
     if(!q->head)   q->tail = 0;     // if dequeued task was the last element in queue
     
     task->next = 0;
+    task->queued = 0;
     return task;
 }
 

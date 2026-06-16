@@ -10,18 +10,19 @@
 #define RTOS_H_
 
 #include <stdint.h>
+#include <stddef.h>
 #include "config.h"
-#include "allocator.h"
+#include "stm32f401xe.h"
 
 /* ---- Task control block ---- */
 typedef struct tcb_s {
     uint32_t        *psp;          // saved process stack pointer for this task
     uint32_t        wake_tick;    // tick at which a BLOCKED task becomes READY (osDelay)
     struct tcb_s    *next;
+    void*           blocked_on;     // pointer to a semaphore/lock that the task is currently waiting on
     uint8_t         state;        // holds a task_state_t, narrowed to 1 byte to keep the TCB small
     uint8_t         priority;     // static priority
-    
-    // to be added later: whatever semaphore/queue it's waiting on
+    uint8_t         queued;         // 0 = not queued, 1 = already scheduled
 } tcb_t;
 
 /* ---- Task states ---- */
@@ -47,4 +48,11 @@ void rtos_start(void);
 
 int  task_create(task_func_t func, uint8_t priority, uint32_t stack_words);
 
+/* ----- Sync helper ------ */
+tcb_t *highest_priority_waiter(void *sem);
+
+static inline void os_yield_to_scheduler(void)
+{
+    SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;   // set PendSV pending -> context switch runs next
+}
 #endif /* RTOS_H_ */

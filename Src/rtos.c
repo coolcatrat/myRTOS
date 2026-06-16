@@ -44,13 +44,13 @@ void SysTick_Handler(void) {
 
     for (int i = 0; i < num_tasks; i++) {
         tcb_t *cur = &tcbs[i];
-        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count){ // check if a task is ready
+        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count && cur->blocked_on == NULL){ // check if a task is ready
             cur->state = TASK_READY;
             scheduler_ready_add(cur);
         } 
     }
 
-    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;   // request a context switch
+    os_yield_to_scheduler();          // request a context switch
 }
 
 // Block the calling task for `ticks` ticks, then give up the CPU now.
@@ -58,8 +58,9 @@ void osDelay(uint32_t ticks) {
     uint32_t old = os_enter_critical();
     current_tcb->wake_tick = tick_count + ticks;   // when to wake back up
     current_tcb->state     = TASK_BLOCKED;         // take self out of contention
+    current_tcb->blocked_on = NULL;
+    os_yield_to_scheduler();                       // yield immediately
     os_exit_critical(old);
-    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;           // yield immediately
 }
 
 
@@ -99,6 +100,7 @@ int task_create(task_func_t func, uint8_t priority, uint32_t stack_words) {
     tcb_t *tcb    = &tcbs[num_tasks];
     tcb->state    = TASK_READY;
     tcb->priority = priority;
+    tcb->queued   = 0;
 
     task_init(tcb, func, stack_base, stack_words);
     scheduler_ready_add(tcb);       // add task to queue
@@ -208,4 +210,20 @@ __attribute__((naked)) void PendSV_Handler(void) {
         "isb                    \n"
         "bx lr                  \n" // exception-return -> CPU pops the hardware frame
     );
+}
+
+/*
+    SYNCHRONIZATION: Scan tcbs[] to find highest priority waiter on a lock
+*/
+tcb_t *highest_priority_waiter(void *sem)
+{
+    tcb_t *best = NULL;
+    for (uint32_t i = 0; i < num_tasks; i++) {
+        if (tcbs[i].state == TASK_BLOCKED && tcbs[i].blocked_on == sem) {
+            if (best == NULL || tcbs[i].priority > best->priority) {
+                best = &tcbs[i];
+            }
+        }
+    }
+    return best;
 }
