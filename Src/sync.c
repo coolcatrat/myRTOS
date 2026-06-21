@@ -13,6 +13,7 @@ void sem_take(semaphore_t* sem){
         return;
     }
     // no token available, block and register as waiting on this semaphore.
+    current_tcb->wait_seq = tick_count;
     current_tcb->state = TASK_BLOCKED;
     current_tcb->blocked_on = sem;
     os_exit_critical(sr);
@@ -48,13 +49,30 @@ void mutex_init(mutex_t *m){
 void mutex_lock(mutex_t *m){
     uint32_t sr = os_enter_critical();
 
+    // prevent deadlock, if a task calls lock on a mutex it has already locked. 
+    if(m->owner == current_tcb){
+        os_exit_critical(sr);
+        return;
+    }
     // if unlocked, assign current task as the owner and lock it.
     if(!m->owner){
         m->owner = current_tcb;
         os_exit_critical(sr);
         return;
     }
-    // if locked, declare task waiting on mutex_t m and block it. 
+    // if locked, check if a lower priority task has locked it. 
+    if(m->owner->priority < current_tcb->priority){
+        // apply priority inheritance. boost the owner to blocker's level 
+        // if the task is ready and already queued, boost it in ready list.
+        if(m->owner->queued){   
+            scheduler_reprioritize(m->owner,current_tcb->priority);
+        }
+        // if task is currently blocked, set EFFECTIVE priority to current tcb's priority.
+        else{
+            m->owner->priority = current_tcb->priority;
+        }
+    }
+    current_tcb->wait_seq = tick_count;
     current_tcb->blocked_on = m;
     current_tcb->state = TASK_BLOCKED;
     os_yield_to_scheduler();        // request context switch
@@ -71,7 +89,8 @@ void mutex_unlock(mutex_t *m){
 
     // unblock the next highest priority task waiting on the mutex
     tcb_t *waiter = highest_priority_waiter(m);
-
+    // drop to base priority if inherited.
+    current_tcb->priority = current_tcb->base_priority;   
     // if a waiter exists, it is the next owner of the mutex.
     if(waiter != NULL){
         m->owner = waiter;

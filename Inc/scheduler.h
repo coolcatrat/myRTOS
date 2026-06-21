@@ -7,5 +7,5 @@
 void   scheduler_init(void);           /* zero ready_list[] + bitmap */
 void   scheduler_ready_add(tcb_t *task);  /* enqueue t into ready_list[t->priority], set bit */
 tcb_t *scheduler_next(void);           /* CLZ the bitmap, dequeue head of top list, return task to run */
-
+void scheduler_reprioritize(tcb_t* task, uint8_t new_priority);
 #endif

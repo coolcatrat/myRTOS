@@ -20,8 +20,10 @@ typedef struct tcb_s {
     uint32_t        wake_tick;    // tick at which a BLOCKED task becomes READY (osDelay)
     struct tcb_s    *next;
     void*           blocked_on;     // pointer to a semaphore/lock that the task is currently waiting on
+    uint32_t         wait_seq;
     uint8_t         state;        // holds a task_state_t, narrowed to 1 byte to keep the TCB small
-    uint8_t         priority;     // static priority
+    uint8_t         priority;       // EFFECTIVE priority
+    uint8_t         base_priority;  // BASE priority 
     uint8_t         queued;         // 0 = not queued, 1 = already scheduled
 } tcb_t;
 

@@ -44,7 +44,7 @@ void SysTick_Handler(void) {
 
     for (int i = 0; i < num_tasks; i++) {
         tcb_t *cur = &tcbs[i];
-        if (cur->state == TASK_BLOCKED && cur->wake_tick <= tick_count && cur->blocked_on == NULL){ // check if a task is ready
+        if (cur->state == TASK_BLOCKED && ((int32_t)(cur->wake_tick - tick_count) <= 0) && cur->blocked_on == NULL){ // check if a task is ready
             cur->state = TASK_READY;
             scheduler_ready_add(cur);
         } 
@@ -100,6 +100,7 @@ int task_create(task_func_t func, uint8_t priority, uint32_t stack_words) {
     tcb_t *tcb    = &tcbs[num_tasks];
     tcb->state    = TASK_READY;
     tcb->priority = priority;
+    tcb->base_priority = priority;
     tcb->queued   = 0;
 
     task_init(tcb, func, stack_base, stack_words);
@@ -220,7 +221,11 @@ tcb_t *highest_priority_waiter(void *sem)
     tcb_t *best = NULL;
     for (uint32_t i = 0; i < num_tasks; i++) {
         if (tcbs[i].state == TASK_BLOCKED && tcbs[i].blocked_on == sem) {
-            if (best == NULL || tcbs[i].priority > best->priority) {
+            if (best == NULL 
+                || tcbs[i].priority > best->priority 
+                || (tcbs[i].priority == best->priority
+                    && (int32_t)(tcbs[i].wait_seq - best->wait_seq) < 0) )   // tcbs[i] is -ve, if arrived earlier.
+            {
                 best = &tcbs[i];
             }
         }

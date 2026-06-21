@@ -53,6 +53,34 @@ static tcb_t* task_dequeue(uint8_t priority){
     return task;
 }
 
+void scheduler_remove_task(tcb_t *task){
+    ready_queue_t *q = &ready_list[task->priority];
+    if(q->head == NULL) return;                 // safety check, caller guarantees membership
+
+    // case 1: task is the head
+    if(q->head == task){
+        q->head = task->next;                   // NULL if it was the only node
+        if(q->tail == task) q->tail = NULL;     // was sole node, list now empty
+        if(q->head == NULL)
+            ready_bitmap &= ~(1u << task->priority);  // update bitmap
+        task->next   = NULL;
+        task->queued = 0;
+        return;
+    }
+
+    // case 2: task is after head — find its predecessor
+    tcb_t *prev = q->head;
+    while(prev->next && prev->next != task)
+        prev = prev->next;
+
+    if(prev->next == task){                     // found
+        prev->next = task->next;                // unconditional: NULL if task was tail
+        if(q->tail == task) q->tail = prev;     // task was tail → prev is new tail
+        task->next   = NULL;
+        task->queued = 0;
+    }
+}
+
 /* api to add task to ready list*/
 void scheduler_ready_add(tcb_t *task){
     task_enqueue(task);
@@ -70,4 +98,13 @@ tcb_t* scheduler_next(void){
         ready_bitmap &= ~(1u << priority);      // clear the priority bit
     
     return task;
+}
+
+
+
+void scheduler_reprioritize(tcb_t* task, uint8_t new_priority){
+    // remove task from ready list. 
+    scheduler_remove_task(task);
+    task->priority = new_priority;
+    scheduler_ready_add(task);
 }
